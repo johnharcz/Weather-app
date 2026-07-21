@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Weather and Satellite Checker</title>
+<style>
+  body { font-family: Arial, sans-serif; max-width: 700px; margin: 20px auto; padding: 0 15px; line-height: 1.5; }
+  h1 { font-size: 1.5em; }
+  h2 { font-size: 1.2em; border-bottom: 1px solid #999; padding-bottom: 4px; margin-top: 30px; }
+  label { display: block; margin-top: 10px; font-weight: bold; }
+  input[type="password"], select { width: 100%; max-width: 400px; padding: 6px; margin-top: 4px; font-size: 1em; }
+  button { margin-top: 12px; padding: 8px 16px; font-size: 1em; cursor: pointer; }
+  .alert-box { border: 2px solid #b00000; background: #fff2f2; padding: 10px; margin-bottom: 10px; }
+  .day-block { border-bottom: 1px solid #ddd; padding: 8px 0; }
+  #save-status, #loading-status { margin-top: 8px; font-style: italic; }
+  .note { font-size: 0.9em; color: #444; }
+</style>
+</head>
+<body>
+
+<h1>Weather and Satellite Checker</h1>
+<p>Location: Mount Morris, Michigan</p>
+
+<section aria-labelledby="apikey-heading">
+  <h2 id="apikey-heading">AI Provider and API Key</h2>
+  <p class="note">Your key is saved only in this browser's local storage. It is never uploaded anywhere, including to GitHub.</p>
+
+  <label for="provider-select">AI provider used for the satellite description</label>
+  <select id="provider-select">
+    <option value="anthropic">Anthropic (Claude)</option>
+    <option value="openai">OpenAI (GPT-4o)</option>
+  </select>
+
+  <label for="anthropic-key">Anthropic API Key</label>
+  <input type="password" id="anthropic-key" autocomplete="off">
+
+  <label for="openai-key">OpenAI API Key</label>
+  <input type="password" id="openai-key" autocomplete="off">
+
+  <button id="save-key-btn" type="button">Save Key</button>
+  <div id="save-status" role="status" aria-live="polite"></div>
+</section>
+
+<section aria-labelledby="check-heading">
+  <h2 id="check-heading">Check Weather</h2>
+  <button id="check-btn" type="button">Check Now</button>
+  <div id="loading-status" role="status" aria-live="polite"></div>
+</section>
+
+<section aria-labelledby="alerts-heading">
+  <h2 id="alerts-heading">Active Alerts</h2>
+  <div id="alerts-content" aria-live="polite">No check has been run yet.</div>
+</section>
+
+<section aria-labelledby="current-heading">
+  <h2 id="current-heading">Current Conditions</h2>
+  <div id="current-content" aria-live="polite">No check has been run yet.</div>
+</section>
+
+<section aria-labelledby="tenday-heading">
+  <h2 id="tenday-heading">10-Day Forecast</h2>
+  <div id="tenday-content" aria-live="polite">No check has been run yet.</div>
+</section>
+
+<section aria-labelledby="discussion-heading">
+  <h2 id="discussion-heading">Forecast Discussion</h2>
+  <div id="discussion-content" aria-live="polite">No check has been run yet.</div>
+</section>
+
+<section aria-labelledby="satellite-heading">
+  <h2 id="satellite-heading">Satellite Description</h2>
+  <div id="satellite-content" aria-live="polite">No check has been run yet.</div>
+</section>
+
+<script>
+// ---------- Configuration ----------
+const LAT = 43.1173;
+const LON = -83.6941;
+const SAT_IMAGE_URL = "https://cdn.star.nesdis.noaa.gov/GOES19/ABI/SECTOR/cgl/GEOCOLOR/1200x1200.jpg";
+
+const WMO_CODES = {
+  0: "clear sky", 1: "mostly clear", 2: "partly cloudy", 3: "overcast",
+  45: "fog", 48: "depositing rime fog",
+  51: "light drizzle", 53: "moderate drizzle", 55: "dense drizzle",
+  56: "light freezing drizzle", 57: "dense freezing drizzle",
+  61: "slight rain", 63: "moderate rain", 65: "heavy rain",
+  66: "light freezing rain", 67: "heavy freezing rain",
+  71: "slight snow", 73: "moderate snow", 75: "heavy snow", 77: "snow grains",
+  80: "slight rain showers", 81: "moderate rain showers", 82: "violent rain showers",
+  85: "slight snow showers", 86: "heavy snow showers",
+  95: "thunderstorm", 96: "thunderstorm with slight hail", 99: "thunderstorm with heavy hail",
+};
+
+const COMPASS_FULL = [
+  "North", "North-Northeast", "Northeast", "East-Northeast",
+  "East", "East-Southeast", "Southeast", "South-Southeast",
+  "South", "South-Southwest", "Southwest", "West-Southwest",
+  "West", "West-Northwest", "Northwest", "North-Northwest",
+];
+const WIND_ABBR_TO_FULL = {
+  N: "North", NNE: "North-Northeast", NE: "Northeast", ENE: "East-Northeast",
+  E: "East", ESE: "East-Southeast", SE: "Southeast", SSE: "South-Southeast",
+  S: "South", SSW: "South-Southwest", SW: "Southwest", WSW: "West-Southwest",
+  W: "West", WNW: "West-Northwest", NW: "Northwest", NNW: "North-Northwest",
+};
+
+function windAbbrToFull(direction) {
+  if (!direction) return direction;
+  return WIND_ABBR_TO_FULL[direction.trim().toUpperCase()] || direction;
+}
+
+function degreesToCompass(deg) {
+  if (deg === null || deg === undefined) return null;
+  const idx = Math.round(deg / 22.5) % 16;
+  return COMPASS_FULL[idx];
+}
+
+const WEEKDAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+function ordinal(n) {
+  const s = ['th','st','nd','rd'];
+  const v = n % 100;
+  return n + (s[(v - 20) % 10] || s[v] || s[0]);
+}
+
+function formatDateOnly(dateStr) {
+  if (!dateStr) return '';
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(y, m - 1, d);
+  return WEEKDAYS[dt.getDay()] + ', ' + MONTHS[dt.getMonth()] + ' ' + ordinal(d);
+}
+
+function formatDateTime(isoStr) {
+  if (!isoStr) return '';
+  const dt = new Date(isoStr);
+  if (isNaN(dt.getTime())) return isoStr;
+  const dateText = WEEKDAYS[dt.getDay()] + ', ' + MONTHS[dt.getMonth()] + ' ' + ordinal(dt.getDate());
+  let hours = dt.getHours();
+  const minutes = dt.getMinutes().toString().padStart(2, '0');
+  const ampm = hours >= 12 ? 'PM' : 'AM';
+  hours = hours % 12;
+  if (hours === 0) hours = 12;
+  return dateText + ' at ' + hours + ':' + minutes + ' ' + ampm;
+}
+
+function cleanAfdText(text) {
+  const paragraphs = (text || '').split(/\n\s*\n/);
+  const cleaned = [];
+  for (const para of paragraphs) {
+    const collapsed = para.split('\n').map(l => l.trim()).filter(Boolean).join(' ');
+    if (collapsed && !collapsed.startsWith('$$')) cleaned.push(collapsed);
+  }
+  let full = cleaned.join('\n\n');
+  if (full.length > 4000) full = full.slice(0, 4000).replace(/\s+\S*$/, '') + '...';
+  return full;
+}
+
+// ---------- Data fetchers ----------
+let cachedPoints = null;
+async function getPoints() {
+  if (cachedPoints) return cachedPoints;
+  const res = await fetch(`https://api.weather.gov/points/${LAT},${LON}`, {
+    headers: { Accept: 'application/geo+json' },
+  });
+  if (!res.ok) throw new Error('NWS points lookup failed: ' + res.status);
+  cachedPoints = await res.json();
+  return cachedPoints;
+}
+
+async function getNwsForecast() {
+  const points = await getPoints();
+  const forecastUrl = points.properties.forecast;
+  const res = await fetch(forecastUrl, { headers: { Accept: 'application/geo+json' } });
+  if (!res.ok) throw new Error('NWS forecast fetch failed: ' + res.status);
+  const data = await res.json();
+  const periods = (data.properties.periods || []).slice(0, 4);
+  return periods.map(p => {
+    const humidity = p.relativeHumidity || {};
+    const dewpoint = p.dewpoint || {};
+    const precip = p.probabilityOfPrecipitation || {};
+    const precipAmount = p.quantitativePrecipitation || {};
+    let dewpointF = null;
+    if (dewpoint.value !== null && dewpoint.value !== undefined) {
+      dewpointF = Math.round(dewpoint.value * 9 / 5 + 32);
+    }
+    let precipAmountIn = null;
+    if (precipAmount.value !== null && precipAmount.value !== undefined) {
+      precipAmountIn = Math.round((precipAmount.value / 25.4) * 100) / 100;
+    }
+    return {
+      name: p.name,
+      temperature: p.temperature,
+      temperatureUnit: p.temperatureUnit,
+      shortForecast: p.shortForecast,
+      windSpeed: p.windSpeed,
+      windDirection: windAbbrToFull(p.windDirection),
+      humidity: humidity.value,
+      dewpointF,
+      precipChance: precip.value,
+      precipAmountIn,
+    };
+  });
+}
+
+async function getAlerts() {
+  const res = await fetch(`https://api.weather.gov/alerts/active?point=${LAT},${LON}`, {
+    headers: { Accept: 'application/geo+json' },
+  });
+  if (!res.ok) throw new Error('NWS alerts fetch failed: ' + res.status);
+  const data = await res.json();
+  return (data.features || []).map(f => {
+    const props = f.properties || {};
+    const severity = props.severity;
+    return {
+      event: props.event,
+      headline: props.headline,
+      severity: (severity && severity.toLowerCase() !== 'unknown') ? severity : null,
+      description: (props.description || '').trim(),
+      instruction: (props.instruction || '').trim(),
+      effective: props.effective || props.onset,
+      expires: props.expires || props.ends,
+      areaDesc: props.areaDesc || '',
+    };
+  });
+}
+
+async function getTenDay() {
+  const params = new URLSearchParams({
+    latitude: LAT,
+    longitude: LON,
+    daily: 'temperature_2m_max,temperature_2m_min,precipitation_probability_max,weathercode,windspeed_10m_max,winddirection_10m_dominant,relative_humidity_2m_mean,precipitation_sum',
+    forecast_days: 10,
+    timezone: 'America/New_York',
+    temperature_unit: 'fahrenheit',
+    windspeed_unit: 'mph',
+    precipitation_unit: 'inch',
+  });
+  const res = await fetch(`https://api.open-meteo.com/v1/forecast?${params}`);
+  if (!res.ok) throw new Error('Open-Meteo fetch failed: ' + res.status);
+  const data = await res.json();
+  const daily = data.daily || {};
+  const dates = daily.time || [];
+  return dates.map((date, i) => ({
+    date,
+    high: daily.temperature_2m_max[i],
+    low: daily.temperature_2m_min[i],
+    precipChance: daily.precipitation_probability_max[i],
+    condition: WMO_CODES[daily.weathercode[i]] || 'unknown conditions',
+    windSpeed: daily.windspeed_10m_max[i],
+    windDirection: degreesToCompass(daily.winddirection_10m_dominant[i]),
+    humidity: daily.relative_humidity_2m_mean[i],
+    precipAmountIn: daily.precipitation_sum ? daily.precipitation_sum[i] : null,
+  }));
+}
+
+async function getForecastDiscussion() {
+  const points = await getPoints();
+  const office = points.properties.cwa;
+  if (!office) return { text: null, issued: null };
+  const listingRes = await fetch(`https://api.weather.gov/products/types/AFD/locations/${office}`, {
+    headers: { Accept: 'application/geo+json' },
+  });
+  if (!listingRes.ok) throw new Error('AFD listing fetch failed: ' + listingRes.status);
+  const listing = await listingRes.json();
+  const graph = listing['@graph'] || [];
+  if (graph.length === 0) return { text: null, issued: null };
+  const productUrl = graph[0]['@id'] || `https://api.weather.gov/products/${graph[0].id}`;
+  const productRes = await fetch(productUrl, { headers: { Accept: 'application/geo+json' } });
+  if (!productRes.ok) throw new Error('AFD product fetch failed: ' + productRes.status);
+  const product = await productRes.json();
+  return { text: cleanAfdText(product.productText), issued: product.issuanceTime };
+}
+
+const SAT_PROMPT_SINGLE = `This is the latest GOES satellite image of the Great Lakes region, centered on Michigan. Give a thorough plain-language description for someone who is blind and cannot see the image, spelling out compass directions in full (say 'northwest' or 'west-southwest', never abbreviations like NW). Cover, in order:
+
+1. Skies directly over Michigan's Lower Peninsula right now: clear, partly cloudy, mostly cloudy, or overcast, and whether any precipitation-bearing clouds appear to be over land right now.
+2. Any distinct cloud bands, fronts, or storm cells visible anywhere in the frame (including over the Great Lakes themselves, Wisconsin, Ohio, Ontario, or Indiana), describing their approximate shape or extent and their location relative to Michigan using full compass directions.
+3. Whether any of those systems appear to be tracking toward Michigan based on typical west-to-east storm movement, and roughly how far away they look.
+4. Any lake-effect cloud streaks off Lake Michigan, Lake Huron, or Lake Superior if visible.
+5. General overall sky character across the wider region shown (mostly clear, scattered systems, one large system dominating, etc.).
+
+Write it as flowing prose in about 6-9 sentences, not a numbered list.`;
+
+async function describeSatelliteAnthropic(apiKey) {
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-5',
+      max_tokens: 900,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'image', source: { type: 'url', url: SAT_IMAGE_URL } },
+          { type: 'text', text: SAT_PROMPT_SINGLE },
+        ],
+      }],
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error('Anthropic API error (' + res.status + '): ' + (data.error?.message || JSON.stringify(data)));
+  return (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
+}
+
+async function describeSatelliteOpenAI(apiKey) {
+  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + apiKey,
+    },
+    body: JSON.stringify({
+      model: 'gpt-4o',
+      max_tokens: 900,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: SAT_PROMPT_SINGLE },
+          { type: 'image_url', image_url: { url: SAT_IMAGE_URL } },
+        ],
+      }],
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error('OpenAI API error (' + res.status + '): ' + (data.error?.message || JSON.stringify(data)));
+  return data.choices[0].message.content.trim();
+}
+
+// ---------- Key storage (browser local storage only) ----------
+function loadConfig() {
+  document.getElementById('anthropic-key').value = localStorage.getItem('wx_anthropic_key') || '';
+  document.getElementById('openai-key').value = localStorage.getItem('wx_openai_key') || '';
+  document.getElementById('provider-select').value = localStorage.getItem('wx_provider') || 'anthropic';
+}
+
+function saveKey() {
+  const status = document.getElementById('save-status');
+  localStorage.setItem('wx_anthropic_key', document.getElementById('anthropic-key').value);
+  localStorage.setItem('wx_openai_key', document.getElementById('openai-key').value);
+  localStorage.setItem('wx_provider', document.getElementById('provider-select').value);
+  status.textContent = 'Saved.';
+}
+
+// ---------- Rendering ----------
+function renderAlerts(alerts, err) {
+  const el = document.getElementById('alerts-content');
+  el.innerHTML = '';
+  if (err) { el.textContent = 'Could not load alerts: ' + err; return; }
+  if (!alerts || alerts.length === 0) { el.textContent = 'No active alerts for your area.'; return; }
+  alerts.forEach(a => {
+    const box = document.createElement('div');
+    box.className = 'alert-box';
+    const h3 = document.createElement('h3');
+    h3.textContent = a.event + (a.severity ? ' (' + a.severity + ' severity)' : '');
+    box.appendChild(h3);
+    if (a.areaDesc) {
+      const p = document.createElement('p');
+      p.textContent = 'Area: ' + a.areaDesc;
+      box.appendChild(p);
+    }
+    if (a.effective || a.expires) {
+      const p = document.createElement('p');
+      let t = '';
+      if (a.effective) t += 'In effect since ' + formatDateTime(a.effective) + '. ';
+      if (a.expires) t += 'Expires ' + formatDateTime(a.expires) + '.';
+      p.textContent = t.trim();
+      box.appendChild(p);
+    }
+    if (a.description) {
+      const p = document.createElement('p');
+      p.textContent = a.description;
+      box.appendChild(p);
+    } else if (a.headline) {
+      const p = document.createElement('p');
+      p.textContent = a.headline;
+      box.appendChild(p);
+    }
+    if (a.instruction) {
+      const p = document.createElement('p');
+      p.textContent = 'What to do: ' + a.instruction;
+      box.appendChild(p);
+    }
+    el.appendChild(box);
+  });
+}
+
+function renderCurrent(periods, err) {
+  const el = document.getElementById('current-content');
+  el.innerHTML = '';
+  if (err) { el.textContent = 'Could not load current conditions: ' + err; return; }
+  if (!periods || periods.length === 0) { el.textContent = 'No data available.'; return; }
+  periods.forEach(p => {
+    const div = document.createElement('div');
+    div.className = 'day-block';
+    let text = p.name + ': ' + p.temperature + ' degrees ' + p.temperatureUnit +
+      ', ' + p.shortForecast + '. Wind ' + p.windSpeed + ' from the ' + p.windDirection + '.';
+    if (p.humidity !== null && p.humidity !== undefined) text += ' Relative humidity ' + Math.round(p.humidity) + ' percent.';
+    if (p.dewpointF !== null && p.dewpointF !== undefined) text += ' Dewpoint ' + p.dewpointF + ' degrees.';
+    if (p.precipChance !== null && p.precipChance !== undefined) text += ' Chance of precipitation ' + p.precipChance + ' percent.';
+    if (p.precipAmountIn !== null && p.precipAmountIn !== undefined && p.precipAmountIn > 0) text += ' Expected precipitation amount ' + p.precipAmountIn + ' inches.';
+    div.textContent = text;
+    el.appendChild(div);
+  });
+}
+
+function renderTenDay(days, err) {
+  const el = document.getElementById('tenday-content');
+  el.innerHTML = '';
+  if (err) { el.textContent = 'Could not load 10-day forecast: ' + err; return; }
+  if (!days || days.length === 0) { el.textContent = 'No data available.'; return; }
+  days.forEach(d => {
+    const div = document.createElement('div');
+    div.className = 'day-block';
+    let text = formatDateOnly(d.date) + ': high ' + Math.round(d.high) + ', low ' + Math.round(d.low) +
+      ', ' + d.condition + ', ' + d.precipChance + ' percent chance of precipitation.';
+    if (d.windSpeed !== null && d.windSpeed !== undefined && d.windDirection) text += ' Wind around ' + Math.round(d.windSpeed) + ' miles per hour from the ' + d.windDirection + '.';
+    if (d.humidity !== null && d.humidity !== undefined) text += ' Average relative humidity ' + Math.round(d.humidity) + ' percent.';
+    if (d.precipAmountIn !== null && d.precipAmountIn !== undefined && d.precipAmountIn > 0) text += ' Expected precipitation amount ' + d.precipAmountIn + ' inches.';
+    div.textContent = text;
+    el.appendChild(div);
+  });
+}
+
+function renderForecastDiscussion(text, issued, err) {
+  const el = document.getElementById('discussion-content');
+  el.innerHTML = '';
+  if (err) { el.textContent = 'Could not load the forecast discussion: ' + err; return; }
+  if (!text) { el.textContent = 'No forecast discussion available.'; return; }
+  if (issued) {
+    const p = document.createElement('p');
+    p.textContent = 'Issued ' + formatDateTime(issued) + ' by your local National Weather Service office.';
+    el.appendChild(p);
+  }
+  text.split('\n\n').forEach(para => {
+    const p = document.createElement('p');
+    p.textContent = para;
+    el.appendChild(p);
+  });
+}
+
+function renderSatellite(description, err) {
+  const el = document.getElementById('satellite-content');
+  el.innerHTML = '';
+  if (err) { el.textContent = err; return; }
+  const p = document.createElement('p');
+  p.textContent = description || 'No description available.';
+  el.appendChild(p);
+}
+
+// ---------- Main check ----------
+async function checkNow() {
+  const loading = document.getElementById('loading-status');
+  const btn = document.getElementById('check-btn');
+  loading.textContent = 'Checking weather and satellite data, this can take up to about a minute because of the satellite image analysis...';
+  btn.disabled = true;
+
+  const results = await Promise.allSettled([getAlerts(), getNwsForecast(), getTenDay(), getForecastDiscussion()]);
+
+  const [alertsR, currentR, tenDayR, discussionR] = results;
+  renderAlerts(alertsR.status === 'fulfilled' ? alertsR.value : null, alertsR.status === 'rejected' ? alertsR.reason.message : null);
+  renderCurrent(currentR.status === 'fulfilled' ? currentR.value : null, currentR.status === 'rejected' ? currentR.reason.message : null);
+  renderTenDay(tenDayR.status === 'fulfilled' ? tenDayR.value : null, tenDayR.status === 'rejected' ? tenDayR.reason.message : null);
+  if (discussionR.status === 'fulfilled') {
+    renderForecastDiscussion(discussionR.value.text, discussionR.value.issued, null);
+  } else {
+    renderForecastDiscussion(null, null, discussionR.reason.message);
+  }
+
+  const anthropicKey = localStorage.getItem('wx_anthropic_key') || '';
+  const openaiKey = localStorage.getItem('wx_openai_key') || '';
+  const provider = localStorage.getItem('wx_provider') || 'anthropic';
+
+  try {
+    if (!anthropicKey && !openaiKey) {
+      renderSatellite(null, 'No API key saved yet. Enter one above and press Save Key.');
+    } else {
+      let desc;
+      if (provider === 'openai' && openaiKey) {
+        desc = await describeSatelliteOpenAI(openaiKey);
+      } else if (provider === 'anthropic' && anthropicKey) {
+        desc = await describeSatelliteAnthropic(anthropicKey);
+      } else if (anthropicKey) {
+        desc = await describeSatelliteAnthropic(anthropicKey);
+      } else {
+        desc = await describeSatelliteOpenAI(openaiKey);
+      }
+      renderSatellite(desc, null);
+    }
+  } catch (e) {
+    renderSatellite(null, e.message);
+  }
+
+  loading.textContent = 'Check complete.';
+  btn.disabled = false;
+}
+
+document.getElementById('save-key-btn').addEventListener('click', saveKey);
+document.getElementById('check-btn').addEventListener('click', checkNow);
+loadConfig();
+</script>
+
+</body>
+</html>
