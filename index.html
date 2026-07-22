@@ -394,6 +394,32 @@ async function getNwsForecast() {
   return { periods: mapped, updated };
 }
 
+async function getCurrentObservation() {
+  const points = await getPoints();
+  const stationsUrl = points.properties.observationStations;
+  if (!stationsUrl) return null;
+  const stationsRes = await fetch(stationsUrl, { headers: { Accept: 'application/geo+json' } });
+  if (!stationsRes.ok) throw new Error('NWS station list fetch failed: ' + stationsRes.status);
+  const stationsData = await stationsRes.json();
+  const features = stationsData.features || [];
+  if (features.length === 0) return null;
+  const stationId = features[0].properties.stationIdentifier;
+  const obsRes = await fetch(`https://api.weather.gov/stations/${stationId}/observations/latest`, {
+    headers: { Accept: 'application/geo+json' },
+  });
+  if (!obsRes.ok) throw new Error('NWS live observation fetch failed: ' + obsRes.status);
+  const obsData = await obsRes.json();
+  const props = obsData.properties || {};
+  const tempC = props.temperature ? props.temperature.value : null;
+  const temperatureF = (tempC !== null && tempC !== undefined) ? Math.round(tempC * 9 / 5 + 32) : null;
+  return {
+    stationName: props.stationName || stationId,
+    temperatureF,
+    condition: props.textDescription || null,
+    timestamp: props.timestamp || null,
+  };
+}
+
 async function getAlerts() {
   const res = await fetch(`https://api.weather.gov/alerts/active?point=${LAT},${LON}`, {
     headers: { Accept: 'application/geo+json' },
@@ -771,7 +797,7 @@ function updateNwsIssuedLine(updated, err) {
   el.textContent = 'Forecast issued by National Weather Service: ' + formatDateTime(updated);
 }
 
-function renderSummary(currentPeriods, alerts, storms, err) {
+function renderSummary(observation, currentPeriods, alerts, storms, err) {
   const el = document.getElementById('summary-line');
   if (err) {
     el.textContent = 'Could not load summary: ' + err;
@@ -779,9 +805,14 @@ function renderSummary(currentPeriods, alerts, storms, err) {
   }
   const parts = [];
 
-  if (currentPeriods && currentPeriods.length > 0) {
+  if (observation && observation.temperatureF !== null && observation.temperatureF !== undefined) {
+    let t = 'Right now: ' + observation.temperatureF + ' degrees';
+    if (observation.condition) t += ', ' + observation.condition;
+    t += '.';
+    parts.push(t);
+  } else if (currentPeriods && currentPeriods.length > 0) {
     const p = currentPeriods[0];
-    let t = 'Right now: ' + p.temperature + ' degrees ' + p.temperatureUnit + ', ' + p.shortForecast + '.';
+    let t = p.name + '\'s forecast: ' + p.temperature + ' degrees ' + p.temperatureUnit + ', ' + p.shortForecast + '.';
     if (p.precipChance !== null && p.precipChance !== undefined) {
       t += ' Chance of precipitation ' + p.precipChance + ' percent.';
     }
@@ -981,9 +1012,9 @@ async function checkWeather() {
   loading.textContent = 'Loading weather data...';
   btn.disabled = true;
 
-  const results = await Promise.allSettled([getAlerts(), getNwsForecast(), getTenDay(), getForecastDiscussion(), getStatewidePrecip(), getClosestStorms(), getNearbyPlaces()]);
+  const results = await Promise.allSettled([getAlerts(), getNwsForecast(), getTenDay(), getForecastDiscussion(), getStatewidePrecip(), getClosestStorms(), getNearbyPlaces(), getCurrentObservation()]);
 
-  const [alertsR, currentR, tenDayR, discussionR, statewideR, stormsR, nearbyR] = results;
+  const [alertsR, currentR, tenDayR, discussionR, statewideR, stormsR, nearbyR, obsR] = results;
   renderAlerts(alertsR.status === 'fulfilled' ? alertsR.value : null, alertsR.status === 'rejected' ? alertsR.reason.message : null);
   if (currentR.status === 'fulfilled') {
     renderCurrent(currentR.value.periods, null);
@@ -1003,10 +1034,11 @@ async function checkWeather() {
   }
 
   renderSummary(
+    obsR.status === 'fulfilled' ? obsR.value : null,
     currentR.status === 'fulfilled' ? currentR.value.periods : null,
     alertsR.status === 'fulfilled' ? alertsR.value : null,
     stormsR.status === 'fulfilled' ? stormsR.value : null,
-    (currentR.status === 'rejected' && alertsR.status === 'rejected') ? 'multiple data sources failed to load' : null
+    (currentR.status === 'rejected' && alertsR.status === 'rejected' && obsR.status === 'rejected') ? 'multiple data sources failed to load' : null
   );
 
   loading.textContent = 'Weather data loaded.';
