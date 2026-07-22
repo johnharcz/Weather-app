@@ -8,6 +8,7 @@
   body { font-family: Arial, sans-serif; max-width: 700px; margin: 20px auto; padding: 0 15px; line-height: 1.5; }
   h1 { font-size: 1.5em; }
   h2 { font-size: 1.2em; border-bottom: 1px solid #999; padding-bottom: 4px; margin-top: 30px; }
+  h3 { font-size: 1.05em; margin-top: 20px; margin-bottom: 8px; }
   label { display: block; margin-top: 10px; font-weight: bold; }
   input[type="password"], select { width: 100%; max-width: 400px; padding: 6px; margin-top: 4px; font-size: 1em; }
   button { margin-top: 12px; padding: 8px 16px; font-size: 1em; cursor: pointer; }
@@ -37,39 +38,15 @@
   <div id="radar-loading-status" role="status" aria-live="polite"></div>
 </section>
 
-<section aria-labelledby="statewide-heading">
-  <h2 id="statewide-heading">Michigan Precipitation by City</h2>
-  <div id="statewide-content" aria-live="polite">No check has been run yet.</div>
-</section>
-
-<section aria-labelledby="nearby-heading">
-  <h2 id="nearby-heading">50 Closest Cities to Mount Morris</h2>
-  <div id="nearby-content" aria-live="polite">No check has been run yet.</div>
-</section>
-
-<section aria-labelledby="closest-storms-heading">
-  <h2 id="closest-storms-heading">5 Closest Storms to Mount Morris</h2>
-  <div id="closest-storms-content" aria-live="polite">No check has been run yet.</div>
-</section>
-
-<section aria-labelledby="alerts-heading">
-  <h2 id="alerts-heading">Active Alerts</h2>
-  <div id="alerts-content" aria-live="polite">No check has been run yet.</div>
-</section>
-
-<section aria-labelledby="current-heading">
-  <h2 id="current-heading">Current Conditions</h2>
-  <div id="current-content" aria-live="polite">No check has been run yet.</div>
-</section>
-
 <section aria-labelledby="tenday-heading">
-  <h2 id="tenday-heading">10-Day Forecast</h2>
+  <h2 id="tenday-heading">Forecast</h2>
   <div id="tenday-content" aria-live="polite">No check has been run yet.</div>
 </section>
 
-<section aria-labelledby="discussion-heading">
-  <h2 id="discussion-heading">Forecast Discussion</h2>
-  <div id="discussion-content" aria-live="polite">No check has been run yet.</div>
+<section aria-labelledby="radar-heading">
+  <h2 id="radar-heading">Radar Precipitation</h2>
+  <p class="note">This reads actual live radar (real precipitation being detected right now), not cloud imagery or a forecast model -- the most accurate source in this app for "is it storming right now."</p>
+  <div id="radar-content" aria-live="polite">No check has been run yet.</div>
 </section>
 
 <section aria-labelledby="satellite-heading">
@@ -77,10 +54,35 @@
   <div id="satellite-content" aria-live="polite">No check has been run yet.</div>
 </section>
 
-<section aria-labelledby="radar-heading">
-  <h2 id="radar-heading">Radar Precipitation</h2>
-  <p class="note">This reads actual live radar (real precipitation being detected right now), not cloud imagery or a forecast model -- the most accurate source in this app for "is it storming right now."</p>
-  <div id="radar-content" aria-live="polite">No check has been run yet.</div>
+<section id="alerts-section" aria-labelledby="alerts-heading" style="display:none">
+  <h2 id="alerts-heading">Active Alerts</h2>
+  <div id="alerts-content" aria-live="polite"></div>
+</section>
+
+<section id="closest-storms-section" aria-labelledby="closest-storms-heading" style="display:none">
+  <h2 id="closest-storms-heading">5 Closest Storms to Mount Morris</h2>
+  <div id="closest-storms-content" aria-live="polite"></div>
+</section>
+
+<section>
+  <details id="statewide-details">
+    <summary><h2 style="display:inline">Michigan Precipitation by City</h2></summary>
+    <div id="statewide-content" aria-live="polite">No check has been run yet.</div>
+  </details>
+</section>
+
+<section>
+  <details id="nearby-details">
+    <summary><h2 style="display:inline">50 Closest Cities to Mount Morris</h2></summary>
+    <div id="nearby-content" aria-live="polite">No check has been run yet.</div>
+  </details>
+</section>
+
+<section>
+  <details id="discussion-details">
+    <summary><h2 style="display:inline">Forecast Discussion</h2></summary>
+    <div id="discussion-content" aria-live="polite">No check has been run yet.</div>
+  </details>
 </section>
 
 <section>
@@ -298,10 +300,37 @@ function windAbbrToFull(direction) {
   return WIND_ABBR_TO_FULL[direction.trim().toUpperCase()] || direction;
 }
 
+function formatAmount(n) {
+  if (n === null || n === undefined) return n;
+  let s = n.toString();
+  if (s.startsWith('0.')) s = s.slice(1);
+  return s;
+}
+
 function degreesToCompass(deg) {
   if (deg === null || deg === undefined) return null;
   const idx = Math.round(deg / 22.5) % 16;
   return COMPASS_FULL[idx];
+}
+
+function getMoonPhase(date) {
+  const synodicMonth = 29.530588853;
+  const knownNewMoon = Date.UTC(2000, 0, 6, 18, 14, 0);
+  const diffDays = (date.getTime() - knownNewMoon) / 86400000;
+  let age = diffDays % synodicMonth;
+  if (age < 0) age += synodicMonth;
+  const illumination = Math.round((1 - Math.cos(2 * Math.PI * age / synodicMonth)) / 2 * 100);
+  let phaseName;
+  if (age < 1.84566) phaseName = 'New Moon';
+  else if (age < 5.53699) phaseName = 'Waxing Crescent';
+  else if (age < 9.22831) phaseName = 'First Quarter';
+  else if (age < 12.91963) phaseName = 'Waxing Gibbous';
+  else if (age < 16.61096) phaseName = 'Full Moon';
+  else if (age < 20.30228) phaseName = 'Waning Gibbous';
+  else if (age < 23.99361) phaseName = 'Last Quarter';
+  else if (age < 27.68493) phaseName = 'Waning Crescent';
+  else phaseName = 'New Moon';
+  return { phaseName, illumination };
 }
 
 const WEEKDAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
@@ -412,11 +441,18 @@ async function getCurrentObservation() {
   const props = obsData.properties || {};
   const tempC = props.temperature ? props.temperature.value : null;
   const temperatureF = (tempC !== null && tempC !== undefined) ? Math.round(tempC * 9 / 5 + 32) : null;
+  const humidityVal = props.relativeHumidity ? props.relativeHumidity.value : null;
+  const windSpeedKmh = props.windSpeed ? props.windSpeed.value : null;
+  const windSpeedMph = (windSpeedKmh !== null && windSpeedKmh !== undefined) ? Math.round(windSpeedKmh / 1.609) : null;
+  const windDirDeg = props.windDirection ? props.windDirection.value : null;
   return {
     stationName: props.stationName || stationId,
     temperatureF,
     condition: props.textDescription || null,
     timestamp: props.timestamp || null,
+    humidity: humidityVal !== null && humidityVal !== undefined ? Math.round(humidityVal) : null,
+    windSpeedMph,
+    windDirection: (windDirDeg !== null && windDirDeg !== undefined) ? degreesToCompass(windDirDeg) : null,
   };
 }
 
@@ -446,7 +482,7 @@ async function getTenDay() {
   const params = new URLSearchParams({
     latitude: LAT,
     longitude: LON,
-    daily: 'temperature_2m_max,temperature_2m_min,precipitation_probability_max,weathercode,windspeed_10m_max,winddirection_10m_dominant,relative_humidity_2m_mean,precipitation_sum',
+    daily: 'temperature_2m_max,temperature_2m_min,precipitation_probability_max,weathercode,windspeed_10m_max,winddirection_10m_dominant,relative_humidity_2m_mean,precipitation_sum,sunrise,sunset',
     forecast_days: 10,
     timezone: 'America/New_York',
     temperature_unit: 'fahrenheit',
@@ -468,6 +504,8 @@ async function getTenDay() {
     windDirection: degreesToCompass(daily.winddirection_10m_dominant[i]),
     humidity: daily.relative_humidity_2m_mean[i],
     precipAmountIn: daily.precipitation_sum ? daily.precipitation_sum[i] : null,
+    sunrise: daily.sunrise ? daily.sunrise[i] : null,
+    sunset: daily.sunset ? daily.sunset[i] : null,
   }));
 }
 
@@ -744,9 +782,11 @@ function saveKey() {
 // ---------- Rendering ----------
 function renderAlerts(alerts, err) {
   const el = document.getElementById('alerts-content');
+  const section = document.getElementById('alerts-section');
   el.innerHTML = '';
-  if (err) { el.textContent = 'Could not load alerts: ' + err; return; }
-  if (!alerts || alerts.length === 0) { el.textContent = 'No active alerts for your area.'; return; }
+  if (err) { section.style.display = ''; el.textContent = 'Could not load alerts: ' + err; return; }
+  if (!alerts || alerts.length === 0) { section.style.display = 'none'; return; }
+  section.style.display = '';
   alerts.forEach(a => {
     const box = document.createElement('div');
     box.className = 'alert-box';
@@ -797,7 +837,7 @@ function updateNwsIssuedLine(updated, err) {
   el.textContent = 'Forecast issued by National Weather Service: ' + formatDateTime(updated);
 }
 
-function renderSummary(observation, currentPeriods, alerts, storms, err) {
+function renderSummary(observation, currentPeriods, alerts, storms, sunTimes, err) {
   const el = document.getElementById('summary-line');
   if (err) {
     el.textContent = 'Could not load summary: ' + err;
@@ -809,6 +849,12 @@ function renderSummary(observation, currentPeriods, alerts, storms, err) {
     let t = 'Right now: ' + observation.temperatureF + ' degrees';
     if (observation.condition) t += ', ' + observation.condition;
     t += '.';
+    if (observation.humidity !== null && observation.humidity !== undefined) {
+      t += ' Humidity ' + observation.humidity + ' percent.';
+    }
+    if (observation.windSpeedMph !== null && observation.windSpeedMph !== undefined && observation.windDirection) {
+      t += ' Wind ' + observation.windSpeedMph + ' mph from the ' + observation.windDirection + '.';
+    }
     parts.push(t);
   } else if (currentPeriods && currentPeriods.length > 0) {
     const p = currentPeriods[0];
@@ -818,6 +864,15 @@ function renderSummary(observation, currentPeriods, alerts, storms, err) {
     }
     parts.push(t);
   }
+
+  if (sunTimes && sunTimes.sunrise && sunTimes.sunset) {
+    const sunriseTime = formatDateTime(sunTimes.sunrise).split(' at ')[1];
+    const sunsetTime = formatDateTime(sunTimes.sunset).split(' at ')[1];
+    parts.push('Sunrise ' + sunriseTime + ', sunset ' + sunsetTime + '.');
+  }
+
+  const moon = getMoonPhase(new Date());
+  parts.push('Moon: ' + moon.phaseName + ', ' + moon.illumination + ' percent illuminated.');
 
   if (alerts && alerts.length > 0) {
     const names = alerts.map(a => a.event).join(', ');
@@ -836,38 +891,61 @@ function renderSummary(observation, currentPeriods, alerts, storms, err) {
   el.textContent = parts.join(' ');
 }
 
-function renderCurrent(periods, err) {
-  const el = document.getElementById('current-content');
-  el.innerHTML = '';
-  if (err) { el.textContent = 'Could not load current conditions: ' + err; return; }
-  if (!periods || periods.length === 0) { el.textContent = 'No data available.'; return; }
-  periods.forEach(p => {
-    const div = document.createElement('div');
-    div.className = 'day-block';
-    let text = p.name + ': ' + p.temperature + ' degrees ' + p.temperatureUnit +
-      ', ' + p.shortForecast + '. Wind ' + p.windSpeed + ' from the ' + p.windDirection + '.';
-    if (p.humidity !== null && p.humidity !== undefined) text += ' Relative humidity ' + Math.round(p.humidity) + ' percent.';
-    if (p.dewpointF !== null && p.dewpointF !== undefined) text += ' Dewpoint ' + p.dewpointF + ' degrees.';
-    if (p.precipChance !== null && p.precipChance !== undefined) text += ' Chance of precipitation ' + p.precipChance + ' percent.';
-    if (p.precipAmountIn !== null && p.precipAmountIn !== undefined && p.precipAmountIn > 0) text += ' Expected precipitation amount ' + p.precipAmountIn + ' inches.';
-    div.textContent = text;
-    el.appendChild(div);
-  });
-}
-
-function renderTenDay(days, err) {
+function renderTenDay(periods, periodsErr, days, err) {
   const el = document.getElementById('tenday-content');
   el.innerHTML = '';
-  if (err) { el.textContent = 'Could not load 10-day forecast: ' + err; return; }
-  if (!days || days.length === 0) { el.textContent = 'No data available.'; return; }
+
+  const nearHeading = document.createElement('h3');
+  nearHeading.textContent = 'Near-Term Forecast';
+  el.appendChild(nearHeading);
+
+  if (periodsErr) {
+    const p = document.createElement('p');
+    p.textContent = 'Could not load near-term forecast: ' + periodsErr;
+    el.appendChild(p);
+  } else if (!periods || periods.length === 0) {
+    const p = document.createElement('p');
+    p.textContent = 'No data available.';
+    el.appendChild(p);
+  } else {
+    periods.forEach(p => {
+      const div = document.createElement('div');
+      div.className = 'day-block';
+      let text = p.name + ': ' + p.temperature + ' degrees ' + p.temperatureUnit +
+        ', ' + p.shortForecast + '. Wind ' + p.windSpeed + ' from the ' + p.windDirection + '.';
+      if (p.humidity !== null && p.humidity !== undefined) text += ' Humidity ' + Math.round(p.humidity) + ' percent.';
+      if (p.dewpointF !== null && p.dewpointF !== undefined) text += ' Dewpoint ' + p.dewpointF + ' degrees.';
+      if (p.precipChance !== null && p.precipChance !== undefined) text += ' Chance of precipitation ' + p.precipChance + ' percent.';
+      if (p.precipAmountIn !== null && p.precipAmountIn !== undefined && p.precipAmountIn > 0) text += ' Expected precipitation amount ' + formatAmount(p.precipAmountIn) + ' inches.';
+      div.textContent = text;
+      el.appendChild(div);
+    });
+  }
+
+  const dailyHeading = document.createElement('h3');
+  dailyHeading.textContent = '10-Day Outlook';
+  el.appendChild(dailyHeading);
+
+  if (err) {
+    const p = document.createElement('p');
+    p.textContent = 'Could not load 10-day forecast: ' + err;
+    el.appendChild(p);
+    return;
+  }
+  if (!days || days.length === 0) {
+    const p = document.createElement('p');
+    p.textContent = 'No data available.';
+    el.appendChild(p);
+    return;
+  }
   days.forEach(d => {
     const div = document.createElement('div');
     div.className = 'day-block';
     let text = formatDateOnly(d.date) + ': high ' + Math.round(d.high) + ', low ' + Math.round(d.low) +
       ', ' + d.condition + ', ' + d.precipChance + ' percent chance of precipitation.';
     if (d.windSpeed !== null && d.windSpeed !== undefined && d.windDirection) text += ' Wind around ' + Math.round(d.windSpeed) + ' miles per hour from the ' + d.windDirection + '.';
-    if (d.humidity !== null && d.humidity !== undefined) text += ' Average relative humidity ' + Math.round(d.humidity) + ' percent.';
-    if (d.precipAmountIn !== null && d.precipAmountIn !== undefined && d.precipAmountIn > 0) text += ' Expected precipitation amount ' + d.precipAmountIn + ' inches.';
+    if (d.humidity !== null && d.humidity !== undefined) text += ' Humidity ' + Math.round(d.humidity) + ' percent.';
+    if (d.precipAmountIn !== null && d.precipAmountIn !== undefined && d.precipAmountIn > 0) text += ' Expected precipitation amount ' + formatAmount(d.precipAmountIn) + ' inches.';
     div.textContent = text;
     el.appendChild(div);
   });
@@ -883,7 +961,7 @@ function renderStatewidePrecip(cities, err) {
     div.className = 'day-block';
     let text = c.name + ': ' + Math.round(c.temperature) + ' degrees, ' + c.condition + ', ';
     if (c.hasPrecip) {
-      text += c.intensity + ' precipitation, ' + c.amount + ' inches per hour.';
+      text += c.intensity + ' precipitation, ' + formatAmount(c.amount) + ' inches per hour.';
     } else {
       text += 'no precipitation.';
     }
@@ -891,7 +969,7 @@ function renderStatewidePrecip(cities, err) {
       text += ' Today\'s forecast high ' + Math.round(c.todayHigh) + ', low ' + Math.round(c.todayLow) + '.';
     }
     if (c.last24hIn !== null && c.last24hIn !== undefined) {
-      text += ' ' + c.last24hIn + ' inches of precipitation in the last 24 hours.';
+      text += ' ' + formatAmount(c.last24hIn) + ' inches of precipitation in the last 24 hours.';
     }
     if (c.nextPrecipText) {
       text += ' Next precipitation expected ' + c.nextPrecipText + '.';
@@ -911,7 +989,7 @@ function renderNearbyPlaces(places, err) {
     div.className = 'day-block';
     let text = p.name + ': ' + Math.round(p.temperature) + ' degrees, ' + p.condition + ', ';
     text += p.hasPrecip
-      ? p.intensity + ' precipitation, ' + p.amount + ' inches per hour.'
+      ? p.intensity + ' precipitation, ' + formatAmount(p.amount) + ' inches per hour.'
       : 'no precipitation.';
     text += ' ' + p.distanceMiles + ' miles ' + p.direction + ' of Mount Morris.';
     div.textContent = text;
@@ -921,17 +999,19 @@ function renderNearbyPlaces(places, err) {
 
 function renderClosestStorms(storms, err) {
   const el = document.getElementById('closest-storms-content');
+  const section = document.getElementById('closest-storms-section');
   el.innerHTML = '';
-  if (err) { el.textContent = 'Could not search for nearby storms: ' + err; return; }
+  if (err) { section.style.display = ''; el.textContent = 'Could not search for nearby storms: ' + err; return; }
   if (!storms || storms.length === 0) {
-    el.textContent = 'No precipitation detected within 150 miles of Mount Morris.';
+    section.style.display = 'none';
     return;
   }
+  section.style.display = '';
   storms.forEach(s => {
     const div = document.createElement('div');
     div.className = 'day-block';
     div.textContent = 'About ' + s.distanceMiles + ' miles ' + s.direction + ' of Mount Morris: ' +
-      s.intensity + ' ' + s.condition + ', ' + s.amount + ' inches per hour.';
+      s.intensity + ' ' + s.condition + ', ' + formatAmount(s.amount) + ' inches per hour.';
     el.appendChild(div);
   });
 }
@@ -1017,13 +1097,16 @@ async function checkWeather() {
   const [alertsR, currentR, tenDayR, discussionR, statewideR, stormsR, nearbyR, obsR] = results;
   renderAlerts(alertsR.status === 'fulfilled' ? alertsR.value : null, alertsR.status === 'rejected' ? alertsR.reason.message : null);
   if (currentR.status === 'fulfilled') {
-    renderCurrent(currentR.value.periods, null);
     updateNwsIssuedLine(currentR.value.updated, null);
   } else {
-    renderCurrent(null, currentR.reason.message);
     updateNwsIssuedLine(null, currentR.reason.message);
   }
-  renderTenDay(tenDayR.status === 'fulfilled' ? tenDayR.value : null, tenDayR.status === 'rejected' ? tenDayR.reason.message : null);
+  renderTenDay(
+    currentR.status === 'fulfilled' ? currentR.value.periods : null,
+    currentR.status === 'rejected' ? currentR.reason.message : null,
+    tenDayR.status === 'fulfilled' ? tenDayR.value : null,
+    tenDayR.status === 'rejected' ? tenDayR.reason.message : null
+  );
   renderStatewidePrecip(statewideR.status === 'fulfilled' ? statewideR.value : null, statewideR.status === 'rejected' ? statewideR.reason.message : null);
   renderNearbyPlaces(nearbyR.status === 'fulfilled' ? nearbyR.value : null, nearbyR.status === 'rejected' ? nearbyR.reason.message : null);
   renderClosestStorms(stormsR.status === 'fulfilled' ? stormsR.value : null, stormsR.status === 'rejected' ? stormsR.reason.message : null);
@@ -1033,11 +1116,16 @@ async function checkWeather() {
     renderForecastDiscussion(null, null, discussionR.reason.message);
   }
 
+  const todaySunriseSunset = (tenDayR.status === 'fulfilled' && tenDayR.value.length > 0)
+    ? { sunrise: tenDayR.value[0].sunrise, sunset: tenDayR.value[0].sunset }
+    : null;
+
   renderSummary(
     obsR.status === 'fulfilled' ? obsR.value : null,
     currentR.status === 'fulfilled' ? currentR.value.periods : null,
     alertsR.status === 'fulfilled' ? alertsR.value : null,
     stormsR.status === 'fulfilled' ? stormsR.value : null,
+    todaySunriseSunset,
     (currentR.status === 'rejected' && alertsR.status === 'rejected' && obsR.status === 'rejected') ? 'multiple data sources failed to load' : null
   );
 
