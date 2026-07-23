@@ -36,6 +36,8 @@
   <div id="satellite-loading-status" role="status" aria-live="polite"></div>
   <button id="radar-btn" type="button">Get Radar Description</button>
   <div id="radar-loading-status" role="status" aria-live="polite"></div>
+  <button id="lightning-btn" type="button">Get Lightning Strikes</button>
+  <div id="lightning-loading-status" role="status" aria-live="polite"></div>
 </section>
 
 <section aria-labelledby="tenday-heading">
@@ -62,6 +64,12 @@
 <section id="closest-storms-section" aria-labelledby="closest-storms-heading" style="display:none">
   <h2 id="closest-storms-heading">5 Closest Storms to Mount Morris</h2>
   <div id="closest-storms-content" aria-live="polite"></div>
+</section>
+
+<section id="lightning-section" aria-labelledby="lightning-heading">
+  <h2 id="lightning-heading">Closest Lightning Strikes</h2>
+  <p class="note">Real strike data from Vaisala's global lightning network (via Xweather), not an AI description of an image -- actual detected strikes within the last 5 minutes, up to 62 miles from Mount Morris.</p>
+  <div id="lightning-content" aria-live="polite">No check has been run yet.</div>
 </section>
 
 <section>
@@ -101,6 +109,10 @@
 
     <label for="openai-key">OpenAI API Key</label>
     <input type="password" id="openai-key" autocomplete="off">
+
+    <label for="xweather-key">Xweather API Key</label>
+    <p class="note">Paste the single combined key exactly as shown on your Xweather dashboard (it's your client ID and secret joined together).</p>
+    <input type="password" id="xweather-key" autocomplete="off">
 
     <button id="save-key-btn" type="button">Save Key</button>
     <div id="save-status" role="status" aria-live="polite"></div>
@@ -700,6 +712,43 @@ async function getClosestStorms() {
   return hits.slice(0, 5);
 }
 
+async function getClosestLightning() {
+  const combinedKey = localStorage.getItem('wx_xweather_key') || '';
+  if (!combinedKey) {
+    return { noKey: true, strikes: [] };
+  }
+  const splitIdx = combinedKey.indexOf('_');
+  if (splitIdx === -1) {
+    return { noKey: true, strikes: [], badFormat: true };
+  }
+  const clientId = combinedKey.slice(0, splitIdx);
+  const clientSecret = combinedKey.slice(splitIdx + 1);
+  const params = new URLSearchParams({
+    radius: '100km',
+    limit: '1000',
+    client_id: clientId,
+    client_secret: clientSecret,
+  });
+  const res = await fetch(`https://data.api.xweather.com/lightning/${LAT},${LON}?${params}`);
+  const data = await res.json();
+  if (!res.ok || data.success === false) {
+    throw new Error((data.error && data.error.description) || ('Xweather API error (' + res.status + ')'));
+  }
+  const strikes = (data.response || []).map(s => {
+    const sLat = s.loc.lat, sLon = s.loc.long;
+    const ob = s.ob || {};
+    const pulse = ob.pulse || {};
+    return {
+      distanceMiles: Math.round(haversineDistanceMiles(LAT, LON, sLat, sLon) * 10) / 10,
+      direction: degreesToCompass(bearingDegrees(LAT, LON, sLat, sLon)),
+      type: pulse.type === 'cg' ? 'cloud-to-ground' : 'intracloud',
+      ageSeconds: ob.age !== undefined ? ob.age : null,
+    };
+  });
+  strikes.sort((a, b) => a.distanceMiles - b.distanceMiles);
+  return { noKey: false, strikes: strikes.slice(0, 5) };
+}
+
 const SAT_PROMPT_SINGLE = `This is the latest GOES satellite image of the Great Lakes region, centered on Michigan. Give a thorough plain-language description for someone who is blind and cannot see the image, spelling out compass directions in full (say 'northwest' or 'west-southwest', never abbreviations like NW).
 
 First, check the corners of the image for any printed timestamp or date/time text overlaid on the image itself (GOES imagery often has one burned into a corner). If you can read one, start your response with a single sentence stating that timestamp exactly as printed. If there is no legible timestamp, skip this and start directly with the description below.
@@ -769,6 +818,7 @@ function loadConfig() {
   document.getElementById('anthropic-key').value = localStorage.getItem('wx_anthropic_key') || '';
   document.getElementById('openai-key').value = localStorage.getItem('wx_openai_key') || '';
   document.getElementById('provider-select').value = localStorage.getItem('wx_provider') || 'anthropic';
+  document.getElementById('xweather-key').value = localStorage.getItem('wx_xweather_key') || '';
 }
 
 function saveKey() {
@@ -776,6 +826,7 @@ function saveKey() {
   localStorage.setItem('wx_anthropic_key', document.getElementById('anthropic-key').value);
   localStorage.setItem('wx_openai_key', document.getElementById('openai-key').value);
   localStorage.setItem('wx_provider', document.getElementById('provider-select').value);
+  localStorage.setItem('wx_xweather_key', document.getElementById('xweather-key').value);
   status.textContent = 'Saved.';
 }
 
@@ -1016,6 +1067,40 @@ function renderClosestStorms(storms, err) {
   });
 }
 
+function formatStrikeAge(ageSeconds) {
+  if (ageSeconds === null || ageSeconds === undefined) return '';
+  if (ageSeconds < 60) return Math.round(ageSeconds) + ' seconds ago';
+  return Math.round(ageSeconds / 60) + ' minutes ago';
+}
+
+function renderLightning(result, err) {
+  const el = document.getElementById('lightning-content');
+  el.innerHTML = '';
+  if (err) { el.textContent = 'Could not load lightning data: ' + err; return; }
+  if (!result || result.noKey) {
+    if (result && result.badFormat) {
+      el.textContent = 'The saved Xweather API key doesn\'t look right -- it should contain an underscore joining your client ID and secret. Check Settings below and re-paste it.';
+    } else {
+      el.textContent = 'No Xweather API key saved yet. Open Settings below, paste your Xweather API Key, and press Save Key.';
+    }
+    return;
+  }
+  if (!result.strikes || result.strikes.length === 0) {
+    el.textContent = 'No lightning strikes detected within 62 miles of Mount Morris in the last 5 minutes.';
+    return;
+  }
+  result.strikes.forEach(s => {
+    const div = document.createElement('div');
+    div.className = 'day-block';
+    let text = 'About ' + s.distanceMiles + ' miles ' + s.direction + ' of Mount Morris: ' + s.type + ' strike';
+    const age = formatStrikeAge(s.ageSeconds);
+    if (age) text += ', ' + age;
+    text += '.';
+    div.textContent = text;
+    el.appendChild(div);
+  });
+}
+
 function renderForecastDiscussion(text, issued, err) {
   const el = document.getElementById('discussion-content');
   el.innerHTML = '';
@@ -1149,10 +1234,26 @@ function checkRadar() {
   );
 }
 
+async function checkLightning() {
+  const loading = document.getElementById('lightning-loading-status');
+  const btn = document.getElementById('lightning-btn');
+  loading.textContent = 'Checking for nearby lightning strikes...';
+  btn.disabled = true;
+  try {
+    const result = await getClosestLightning();
+    renderLightning(result, null);
+  } catch (e) {
+    renderLightning(null, e.message);
+  }
+  loading.textContent = 'Check complete.';
+  btn.disabled = false;
+}
+
 document.getElementById('save-key-btn').addEventListener('click', saveKey);
 document.getElementById('refresh-weather-btn').addEventListener('click', checkWeather);
 document.getElementById('satellite-btn').addEventListener('click', checkSatellite);
 document.getElementById('radar-btn').addEventListener('click', checkRadar);
+document.getElementById('lightning-btn').addEventListener('click', checkLightning);
 loadConfig();
 checkWeather();
 </script>
